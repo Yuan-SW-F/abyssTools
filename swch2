@@ -1,0 +1,125 @@
+#!/usr/bin/perl -w
+=head1 Name
+    /hwfssz1/ST_AGRIC/LOCAL/Pipline/PL-program/01.filter/switch_dataformat.pl
+Info
+    Version V
+    Author: st_agric (FuYuan), fuyuan@genomics.cn
+    Created Time: 2017-07-06 21:20:19
+    Created Version: switch_dataformat.pl
+Usage
+    switch_dataformat.pl	
+=cut
+use strict;
+use feature qw(say);
+use lib '/hwfssz1/ST_AGRIC/LOCAL/Pipline/PL-program/lib';
+use MCsub;
+use MClibr;
+use Getopt::Long;
+my ($alist,$blist,$lane,$lib,$insert,$cfg,$assembly,$map,$filter,$output,$swch,$short,$help);
+GetOptions(
+	"alist:s"=>\$alist,
+	"blist:s"=>\$blist,
+	"swch!"=>\$swch,
+	"lane:s"=>\$lane,
+	"lib:s"=>\$lib,
+	"insert:i"=>\$insert,
+	"cfg!"=>\$cfg,
+	"assembly!"=>\$assembly,
+	"map!"=>\$map,
+	"short!"=>\$short,
+	"filter!"=>\$filter,
+	"output:s"=>\$output,
+	"help!"=>\$help
+);
+my $in=shift;
+$alist||="3 0 30";
+$blist||="3 0 10";
+$lane||="lane.lst";
+$lib||="lib.lst";
+$insert||=1 if  $swch;
+$insert||=200;
+$in||="lane.lst" if -f "lane.lst";
+$output="assembly.lst" if $assembly;
+$output="map.lst" if $map;
+$output="filter.lst" if $filter;
+$in||="assembly.lst" if -f "assembly.lst";
+$output||="assembly.lst" if ! $cfg;
+die opth() if $help;
+die opth() if (! -e $in && ! -e $lane && ! -e $lib);
+
+$in="assembly.lst_bf" if $in && $in eq "assembly.lst";
+`mv assembly.lst assembly.lst_bf` if -f "assembly.lst";
+
+my (@seqs,%myist,%ist,%libs,%ists,$cfgfa);
+$in= &libcfg if $in && `less $in`=~/\[/;
+if (`less $in`=~/\S+\s+\d+/){
+	@seqs= inarray($in);
+	%myist= inhash($in);
+}elsif(-f $lane){
+	@seqs= inarray($lane)
+}else{
+	@seqs= inarray($in);
+}
+%ist= inhash($lib) if -f $lib;
+if (! -f $lib){
+	for (keys %myist){
+		/L\d\_(\w+\-\S+)\_(\d)/ || $1=~/(\S+)\_(\d)/;
+		$ist{$1}=$myist{$_} if ! exists $ist{$1};
+	}
+}
+for (@seqs){
+	 %{$libs{$_}}= ilib($_);
+	 push @{$ists{$libs{$_}{lib}}},$_;
+	 say  $ists{$libs{$_}{lib}};
+	$ist{$libs{$_}{lib}}||= "$insert";
+	}
+open OUT,">$output" if $output;
+open OUT,">lib.cfg" if $cfg;
+print OUT "max_rd_len=150\n\n" if $cfg;
+mkdir "filter.log" if $filter;
+`rm filter.log/*lane 2>/dev/null` if $filter;
+my $n=1;
+#say keys %ist;
+for my $i(sort {$ist{$a} <=> $ist{$b}} keys %ist){
+	if ($filter){open FIL,">filter.log/$ist{$i}\_$i.lane"};
+	if ($cfg){
+		$n++ if $ist{$i} >=2000;
+		print OUT  $ist{$i} <2000 ? "[LIB]\nname=$i\navg_ins=$ist{$i}\nreverse_seq=0\nasm_flags=3\nrank=$n\npair_num_cutoff=3\nmap_len=32\n" : "[LIB]\nname=$i\navg_ins=$ist{$i}\nreverse_seq=1\nasm_flags=2\nrank=$n\npair_num_cutoff=5\nmap_len=35\n";
+	}
+	for (sort {$a cmp $b} @{$ists{$i}}){
+		if ($cfg){
+			$cfgfa.= $libs{$_}{reads} ==1 ? "q1=$_\n" : "q2=$_\n";
+		}else{
+			if ($short){
+				say OUT "$_ $ist{$libs{$_}{lib}}" if $ist{$libs{$_}{lib}}<2000;
+			}else{
+				say OUT "$_ $ist{$libs{$_}{lib}}";
+			}
+		}
+		if ($filter){print FIL $libs{$_}{reads} ==1 ? "$_ $alist\n" : "$_ $blist\n";}
+	}
+	say OUT "$cfgfa" if $cfg;
+	$cfgfa="";
+}
+my $outist;
+for (sort {$ist{$a} <=> $ist{$b}} keys %ist){
+	$outist.="$_\t$ist{$_}\n";
+}
+output("lib.lst",$outist) if (! -e "lib.lst" && $filter);
+
+##############################################
+######## Sub Routines ##### Good Luck ########
+##############################################
+sub libcfg
+{
+	open OUT,">assembly.lst";
+	open IN,$in||$!;
+	while (<IN>){
+		$insert=$1 if /avg_ins\=(\d+)/;
+		print OUT "$1\t$insert\n" if /q\d?\=(\/\S+)/;
+	}
+	close OUT;
+	close IN;
+	return "assembly.lst";
+}
+
